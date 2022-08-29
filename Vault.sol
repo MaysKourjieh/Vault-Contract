@@ -35,9 +35,8 @@ contract Token is ERC20, Ownable {
 contract Escapable is Ownable {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
-    address public escapeHatchCaller;
+
     address public escapeHatchDestination;
-    address public sender;
     mapping(address => uint256) public etherBalance;
     // tokens are declared immutable but unfortunately immutable state variables cannot be read at construction time
     IERC20 public token;
@@ -46,53 +45,32 @@ contract Escapable is Ownable {
         uint256 amount
     );
 
-    /**
-     * @notice modifier to check the caller of a function
-     */
-    modifier onlyEscapeHatchCallerOrOwner() {
-        require(
-            (msg.sender == escapeHatchCaller) && (msg.sender == sender),
-            "Neither a Hatch caller Nor an Owner"
-        );
-        _;
-    }
-
     constructor(
-        address _escapeHatchCaller,
         address _escapeHatchDestination,
         address _tokenAddress
     ) {
-        escapeHatchCaller = _escapeHatchCaller;
         escapeHatchDestination = _escapeHatchDestination;
-        sender = msg.sender;
         token = Token(_tokenAddress);
     }
 
     function escapeHatch() 
-        public 
-        onlyEscapeHatchCallerOrOwner 
-    {
-        uint256 tokenTotal = token.balanceOf(escapeHatchCaller);
-        uint256 etherTotal = address(escapeHatchCaller).balance;
-        require(
-            token.balanceOf(escapeHatchCaller) >= tokenTotal,
-            "Your token amount must be greater then you are trying to deposit"
-        );
-        token.safeTransfer(escapeHatchDestination, tokenTotal);
-        require(
-            etherBalance[escapeHatchCaller] >= etherTotal, "Not enough balance"
-        );
-        etherBalance[escapeHatchCaller] = etherBalance[escapeHatchCaller].sub(etherTotal);
-        (bool success, ) = escapeHatchDestination.call{value: etherTotal}("");
-        require(success, "Failed to send Ether");
-        emit EscapeHatchCalled(tokenTotal);
-    }
-
-    function changeEscapeCaller(address _newEscapeHatchCaller)
         public
-        onlyEscapeHatchCallerOrOwner
+        onlyOwner
     {
-        escapeHatchCaller = _newEscapeHatchCaller;
+        uint256 tokenTotal = token.balanceOf(address(this));
+        uint256 etherTotal = address(this).balance;
+        
+        if (tokenTotal > 0) {
+            token.safeTransfer(escapeHatchDestination, tokenTotal);
+        }
+
+        if (etherTotal > 0) {
+            etherBalance[address(this)] = 0;
+            (bool success, ) = escapeHatchDestination.call{value: etherTotal}("");
+            require(success, "Failed to send Ether");
+        }
+
+        emit EscapeHatchCalled(tokenTotal);
     }
 }
 
@@ -113,6 +91,7 @@ contract Vault is Ownable, Escapable {
         uint256 amount;
         uint256 securityGuardDelay;
         bool added;
+        bool currency;
     }
 
     struct AllowedSpender {
@@ -180,7 +159,6 @@ contract Vault is Ownable, Escapable {
     }
 
     constructor(
-        address _escapeHatchCaller,
         address _escapeHatchDestination,
         address _tokenAddress,
         uint256 _timeLock,
@@ -189,7 +167,6 @@ contract Vault is Ownable, Escapable {
         uint256 _maxSecurityGuardDelay
     ) 
         Escapable(
-        _escapeHatchCaller,
         _escapeHatchDestination,
         _tokenAddress
     ) {
@@ -207,27 +184,25 @@ contract Vault is Ownable, Escapable {
         emit EtherDeposited(msg.sender, msg.value);
     }
 
-    function depositToken() external payable {
-        require(msg.value > 0, "Send some tokens to deposit");
+    function depositToken(uint amount) external payable {
+        require(amount > 0, "Send some tokens to deposit");
         require(
-            token.balanceOf(msg.sender) >= msg.value,
+            token.balanceOf(msg.sender) >= amount,
             "Your token amount must be greater then you are trying to deposit"
         );
         require(
-            token.allowance(msg.sender, address(this)) >= msg.value,
+            token.allowance(msg.sender, address(this)) >= amount,
             "Approve tokens first!"
         );
-        token.safeTransferFrom(msg.sender, address(this), msg.value);
-        emit Deposited(msg.sender, msg.value);
+        token.safeTransferFrom(msg.sender, address(this), amount);
+        emit Deposited(msg.sender, amount);
     }
 
     function authorizeSpender(address _spender, bool _authorize)
         public
         onlyOwner
     {
-        allowedSpenders[_spender].authorize = _authorize;
-        allowedSpenders[_spender].added = true;
-        allowedSpenders[_spender].isDeleted = false;
+        allowedSpenders[_spender]= AllowedSpender(_authorize, false, true);
         emit SpenderAuthorization(_spender, _authorize);
     }
 
@@ -235,7 +210,8 @@ contract Vault is Ownable, Escapable {
         string calldata _name,
         address _recipient,
         uint256 _amount,
-        uint256 _paymentDelay
+        uint256 _paymentDelay,
+        bool _currency
     ) 
         public 
         onlyAllowedSpender 
@@ -245,17 +221,25 @@ contract Vault is Ownable, Escapable {
             abi.encodePacked(_name, _recipient, _amount, msg.sender)
         );
 
-        authorizedPayments[idPayment].spender = msg.sender;
-
-        authorizedPayments[idPayment].earliestPayTime = _paymentDelay >=
+        uint payTime = _paymentDelay >=
             timeLock
             ? block.timestamp.add(_paymentDelay)
             : block.timestamp.add(timeLock);
 
-        authorizedPayments[idPayment].recipient = _recipient;
-        authorizedPayments[idPayment].amount = _amount;
-        authorizedPayments[idPayment].name = _name;
-        authorizedPayments[idPayment].added = true;
+        authorizedPayments[idPayment]= 
+            Payment(
+                _name, 
+                msg.sender, 
+                payTime, 
+                false, 
+                false, 
+                _recipient, 
+                _amount, 
+                0, 
+                true, 
+                _currency
+            );
+
         emit PaymentAuthorized(
             idPayment,
             authorizedPayments[idPayment].recipient,
@@ -275,27 +259,22 @@ contract Vault is Ownable, Escapable {
         );
         require(!authorizedPayments[_idPayment].canceled, "canceled payment");
         require(!authorizedPayments[_idPayment].paid, "paid already payment");
-        require(
-            token.balanceOf(msg.sender) > authorizedPayments[_idPayment].amount,
-            "not enough token balance"
-        );
 
         authorizedPayments[_idPayment].paid = true;
-        token.safeTransfer(
+        if (authorizedPayments[_idPayment].currency) {
+            (bool sent, ) = authorizedPayments[_idPayment].recipient.call{
+                            value: authorizedPayments[_idPayment].amount
+                            }("");
+            require(sent, "eth failed to be sent");
+        } else {
+            token.safeTransfer(
             authorizedPayments[_idPayment].recipient,
             authorizedPayments[_idPayment].amount
-        );
-        require(
-            etherBalance[msg.sender] >= authorizedPayments[_idPayment].amount,
-            "not enough eth balance"
-        );
-        etherBalance[msg.sender] = etherBalance[msg.sender].sub(
-            authorizedPayments[_idPayment].amount
-        );
-        (bool sent, ) = authorizedPayments[_idPayment].recipient.call{
-            value: authorizedPayments[_idPayment].amount
-        }("");
-        require(sent, "eth failed to be sent");
+            );
+        }
+        // etherBalance[msg.sender] = etherBalance[msg.sender].sub(
+        //     authorizedPayments[_idPayment].amount
+        // );
         emit PaymentExecuted(
             _idPayment,
             authorizedPayments[_idPayment].recipient,
