@@ -59,7 +59,7 @@ contract Escapable is Ownable {
     {
         uint256 tokenTotal = token.balanceOf(address(this));
         uint256 etherTotal = address(this).balance;
-        
+
         if (tokenTotal > 0) {
             token.safeTransfer(escapeHatchDestination, tokenTotal);
         }
@@ -126,7 +126,8 @@ contract Vault is Ownable, Escapable {
     event PaymentAuthorized(
         bytes32 indexed idPayment,
         address indexed recipient,
-        uint256 amount
+        uint256 amount,
+        bool currency
     );
 
     event PaymentCanceled(
@@ -136,7 +137,8 @@ contract Vault is Ownable, Escapable {
     event PaymentExecuted(
         bytes32 indexed idPayment,
         address indexed recipient,
-        uint256 amount
+        uint256 amount,
+        bool currency
     );
 
     event EtherDeposited(
@@ -243,7 +245,8 @@ contract Vault is Ownable, Escapable {
         emit PaymentAuthorized(
             idPayment,
             authorizedPayments[idPayment].recipient,
-            authorizedPayments[idPayment].amount
+            authorizedPayments[idPayment].amount,
+            authorizedPayments[idPayment].currency
         );
         return idPayment;
     }
@@ -272,13 +275,12 @@ contract Vault is Ownable, Escapable {
             authorizedPayments[_idPayment].amount
             );
         }
-        // etherBalance[msg.sender] = etherBalance[msg.sender].sub(
-        //     authorizedPayments[_idPayment].amount
-        // );
+
         emit PaymentExecuted(
             _idPayment,
             authorizedPayments[_idPayment].recipient,
-            authorizedPayments[_idPayment].amount
+            authorizedPayments[_idPayment].amount,
+            authorizedPayments[_idPayment].currency
         );
     }
 
@@ -292,6 +294,13 @@ contract Vault is Ownable, Escapable {
 
         authorizedPayments[_idPayment].canceled = true;
         emit PaymentCanceled(_idPayment);
+    }
+
+    function setSecurityGuard(address _newSecurityGuard) 
+        public 
+        onlyOwner 
+    {
+        securityGuard = _newSecurityGuard;
     }
 
     function setTimelock(uint256 _newTimeLock) 
@@ -321,19 +330,16 @@ contract Vault is Ownable, Escapable {
         );
 
         authorizedPayments[_idPayment].securityGuardDelay = authorizedPayments[
-            _idPayment
-        ].securityGuardDelay.add(_delay);
+            _idPayment].securityGuardDelay.add(_delay);
         authorizedPayments[_idPayment].earliestPayTime = authorizedPayments[
-            _idPayment
-        ].earliestPayTime.add(_delay);
+            _idPayment].earliestPayTime.add(_delay);
     }
 
     function removeWhitelist(address _address) 
         public 
-        onlyOwner 
+        onlyOwner
     {
         require(allowedSpenders[_address].added, "doesn't exist to remove");
-        allowedSpenders[_address].authorize = false;
-        allowedSpenders[_address].isDeleted = true;
+        allowedSpenders[_address] = AllowedSpender(false,true,false);
     }
 }
