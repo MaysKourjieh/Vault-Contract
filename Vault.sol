@@ -37,7 +37,6 @@ contract Escapable is Ownable {
     using SafeERC20 for IERC20;
 
     address public escapeHatchDestination;
-    mapping(address => uint256) public etherBalance;
     // tokens are declared immutable but unfortunately immutable state variables cannot be read at construction time
     IERC20 public token;
 
@@ -65,7 +64,6 @@ contract Escapable is Ownable {
         }
 
         if (etherTotal > 0) {
-            etherBalance[address(this)] = 0;
             (bool success, ) = escapeHatchDestination.call{value: etherTotal}("");
             require(success, "Failed to send Ether");
         }
@@ -182,7 +180,6 @@ contract Vault is Ownable, Escapable {
 
     receive() external payable {
         require(msg.value > 0, "Send some eth to deposit");
-        etherBalance[msg.sender] = etherBalance[msg.sender].add(msg.value);
         emit EtherDeposited(msg.sender, msg.value);
     }
 
