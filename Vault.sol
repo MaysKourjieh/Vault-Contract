@@ -250,7 +250,6 @@ contract Vault is Ownable, Escapable {
 
     function collectAuthorizedPayment(bytes32 _idPayment)
         public
-        onlyAllowedSpender
     {
         require(authorizedPayments[_idPayment].added, "payment doesn't exist");
         require(
