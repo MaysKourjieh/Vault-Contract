@@ -158,6 +158,14 @@ contract Vault is Ownable, Escapable {
         _;
     }
 
+    modifier onlyRecipient(bytes32 _idPayment) {
+        require(
+            (msg.sender == authorizedPayments[_idPayment].recipient),
+            "not authorized for collecting payment"
+        );
+        _;
+    }
+
     constructor(
         address _escapeHatchDestination,
         address _tokenAddress,
@@ -250,6 +258,7 @@ contract Vault is Ownable, Escapable {
 
     function collectAuthorizedPayment(bytes32 _idPayment)
         public
+        onlyRecipient(_idPayment)
     {
         require(authorizedPayments[_idPayment].added, "payment doesn't exist");
         require(
